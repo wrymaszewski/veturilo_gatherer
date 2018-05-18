@@ -21,6 +21,7 @@ from scraper.serializers import (LocationSerializer,
 from rest_framework.renderers import JSONRenderer
 from rest_framework.parsers import JSONParser
 from django.utils.six import BytesIO
+import pprint
 
 def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     """
@@ -66,10 +67,10 @@ def take_snapshot():
         )
         obj.save()
 
-@periodic_task(run_every=crontab(hour='*/12'))
+@periodic_task(run_every=crontab(hour='*/4'))
 def send_data():
         """
-        Serialization and sending the data to the UI app once in 12h.
+        Serialization and sending the data to the UI app once in 4h.
         Then the the data is deleted.
         """
         # Locations
@@ -121,25 +122,32 @@ def reduce_data():
     first = today.replace(day=1)
     last_month = first - timedelta(days=1)
 
-    # put the data in the temporary database
+    # Serialization
+    obj_list = []
     for location, time, weekend in means.index:
         subset_mean = means.xs((location, time, weekend), level=(0,1,2), axis=0)
         subset_sd = sd.xs((location, time, weekend), level=(0,1,2), axis=0)
-        m = Stat.objects.get_or_create(
+        stat = Stat(
             location = locations.get(pk=location),
             avail_bikes_mean = subset_mean['avail_bikes'],
             free_stands_mean = subset_mean['free_stands'],
-            avail_bikes_sd = subset_sd['avail_bikes'],
-            free_stands_sd = subset_sd['free_stands'],
+            # avail_bikes_sd = subset_sd['avail_bikes'],
+            avail_bikes_sd = 1,
+            # free_stands_sd = subset_sd['free_stands'],
+            free_stands_sd = 1,
             time = time,
             month = last_month,
             weekend = weekend
         )
-
         # serialize the data
-        stats = Stat.objects.all()
-        stat_serializer = StatSerializer(stats, many=True)
-        stat_json = JSONRenderer().render(stat_serializer.data)
-        ######code for API connection
-        # delete created stats from the temporary databases
-        stats.delete()
+        stat_serializer = StatSerializer(stat)
+        obj_list.append(stat_serializer.data)
+
+    # convert into json
+    stat_json = JSONRenderer().render(obj_list)
+    print(stat_json)
+    # ######code for API connection
+
+
+reduce_data()
+# take_snapshot()
