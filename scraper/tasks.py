@@ -60,10 +60,10 @@ def take_snapshot():
         )
         obj.save()
 
-@periodic_task(run_every=crontab(hour='*/12'))
+@periodic_task(run_every=crontab(hour='*/4'))
 def send_data():
         """
-        Serialization and sending the data to the UI app once in 12h.
+        Serialization and sending the data to the UI app once in 4h.
         Then the the data is deleted.
         """
         # Locations
@@ -79,7 +79,6 @@ def send_data():
         ######code for API connection
 
         # Clearing the databases
-        locations.delete()
         snapshots.delete()
 
 @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
