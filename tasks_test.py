@@ -17,6 +17,12 @@ from django.db.models import Avg
 from scraper.models import Snapshot, Location, Stat
 import datetime
 
+from scraper.serializers import (LocationSerializer,
+                                SnapshotSerializer, StatSerializer)
+from rest_framework.renderers import JSONRenderer
+from rest_framework.parsers import JSONParser
+
+import pprint
 
 def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     """
@@ -37,7 +43,7 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     return df
 
 
-# @periodic_task(run_every=crontab())
+@periodic_task(run_every=crontab(minute='*/10'))
 def take_snapshot():
     """
     Function that scrapes the veturilo website every 30 minutes and places
@@ -58,95 +64,75 @@ def take_snapshot():
             location = loc,
             avail_bikes = single['Bikes'],
             free_stands = single['Free stands'],
+            timestamp = datetime.now(tz = timezone('Europe/Warsaw'))
         )
+        # time.sleep(0.25)
         obj.save()
+
+
         print('Time: ' +  str(obj.timestamp))
+        print('----------')
+
+@periodic_task(run_every=crontab(minute='*/10'))
+def send_data():
+
+
+
+
+
+
+
+
+
+
+
 
 
 # @periodic_task(run_every=crontab(minute=0, hour=0))
-def delete_old():
-    """
-    Function that deletes snapshots >35 days old on the daily basis.
-    """
-    objs = (Snapshot
-            .objects
-            .filter(timestamp__lte=(datetime.now() - timedelta(days=35)))
-            )
-    objs.delete()
-
-
+# def delete_old():
+#     """
+#     Function that deletes snapshots >35 days old on the daily basis.
+#     """
+#     objs = (Snapshot
+#             .objects
+#             .filter(timestamp__lte=(datetime.now() - timedelta(days=35)))
+#             )
+#     objs.delete()
+#
+#
 # @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
-def reduce_data():
-    """
-    Function averages data from every month and places it in a separate
-    table.
-    """
-    snapshots = Snapshot.objects.all()
-    locations = Location.objects.all()
-    lst=[]
-    for snapshot in snapshots:
-        lst.append([snapshot.location.name, snapshot.avail_bikes,
-                    snapshot.free_stands, snapshot.timestamp,
-                    snapshot.weekend])
-    cols = ['location', 'avail_bikes', 'free_stands', 'timestamp', 'weekend']
-    df = pd.DataFrame(lst, columns=cols)
-    df['time'] = df['timestamp'].dt.round('10min').dt.strftime('%H:%M')
-
-    group = df.groupby(['location', 'time', 'weekend'])
-    means = group.mean()
-    sd = group.std()
-    today = date.today()
-    first = today.replace(day=1)
-    last_month = first - timedelta(days=1)
-
-    for name, time, weekend in means.index:
-        subset_mean = means.xs((name, time, weekend), level=(0, 1, 2), axis=0)
-        subset_sd = sd.xs((name, time, weekend), level=(0, 1, 2), axis=0)
-        m = Stat.objects.get_or_create(
-        location = locations.get(name=name),
-        avail_bikes_mean = subset_mean['avail_bikes'],
-        free_stands_mean = subset_mean['free_stands'],
-        avail_bikes_sd = subset_sd['avail_bikes'],
-        free_stands_sd = subset_sd['free_stands'],
-        time = time,
-        month = last_month,
-        weekend = weekend
-        )
-        print(name + ' calculated' + ' --weekend: ' + str(weekend))
-
-if __name__ == '__main__':
-    # for snapshot in Snapshot.objects.select_related():
-    #     snapshot.save()
-    #     print(snapshot.location.name +  ' changed')
-    # print('-----------------')
-
-    # locs = Location.objects.all()
-    # for loc in locs:
-    #     loc.save()
-    #     print(loc.name + ' saved')
-    #
-    # stats = Stat.objects.select_related()
-    #
-    # for stat in stats:
-    #     stat.avail_bikes_sd = 1
-    #     stat.free_stands_sd = 2
-    #     stat.save()
-    #     print(stat.location.name)
-
-    print('Collecting snapshots')
-    snaps = Snapshot.objects.all()
-    print('Snapshots collected, applying modifications')
-    i=0
-    length = len(snaps)
-    for s in snaps:
-        i += 1
-        print(i)
-        if i>35000:
-            s.save()
-            print('snap saved ' + str(i)+'/'+str(length))
-            print('-----------')
-    print('Deleting stats')
-    Stat.objects.all().delete()
-    print('Stats deleted, reducing data')
-    reduce_data()
-    print('Data reduced')
+# def reduce_data():
+#     """
+#     Function averages data from every month and places it in a separate
+#     table.
+#     """
+#     snapshots = Snapshot.objects.all()
+#     locations = Location.objects.all()
+#     lst=[]
+#     for snapshot in snapshots:
+#         lst.append([snapshot.location.name, snapshot.avail_bikes,
+#                     snapshot.free_stands, snapshot.timestamp])
+#     cols = ['location', 'avail_bikes', 'free_stands', 'timestamp']
+#     df = pd.DataFrame(lst, columns=cols)
+#     df['time'] = df['timestamp'].dt.round('10min').dt.strftime('%H:%M')
+#
+#     group = df.groupby(['location', 'time'])
+#     means = group.mean()
+#     sd = group.std()
+#     today = date.today()
+#     first = today.replace(day=1)
+#     last_month = first - timedelta(days=1)
+#
+#     for name, time in means.index:
+#         subset_mean = means.xs((name, time), level=(0,1), axis=0)
+#         subset_sd = sd.xs((name, time), level=(0,1), axis=0)
+#         m = Stat.objects.get_or_create(
+#         location = locations.get(name=name),
+#         avail_bikes_mean = subset_mean['avail_bikes'],
+#         free_stands_mean = subset_mean['free_stands'],
+#         avail_bikes_sd = subset_sd['avail_bikes'],
+#         free_stands_sd = subset_sd['free_stands'],
+#         time = time,
+#         month = last_month
+#         )
+#         print(name + ' calculated')
