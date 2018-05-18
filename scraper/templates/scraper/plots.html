@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% block charts %}
-  <h2 class="text-center font-weight-bold">{{location.name}}</h2>
-  {% if scatter %}
-      {{ scatter|safe }}
-  {% endif %}
-{% endblock charts %}
