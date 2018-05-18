@@ -37,7 +37,6 @@ conda-build==3.0.27
 conda-verify==2.0.0
 contextlib2==0.5.5
 cryptography==2.0.3
-cufflinks==0.12.1
 cycler==0.10.0
 Cython==0.26.1
 cytoolz==0.8.2
@@ -68,6 +67,7 @@ django-sekizai==0.10.0
 django-star-ratings==0.6.0
 django-widget-tweaks==1.4.1
 djangocms-installer==0.9.7
+djangorestframework==3.8.2
 docutils==0.14
 entrypoints==0.2.3
 et-xmlfile==1.0.1

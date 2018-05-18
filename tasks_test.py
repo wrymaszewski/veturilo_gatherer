@@ -4,7 +4,6 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE','veturilo.settings')
 import django
 django.setup()
 
-
 import requests
 import pandas as pd
 
@@ -21,8 +20,7 @@ from scraper.serializers import (LocationSerializer,
                                 SnapshotSerializer, StatSerializer)
 from rest_framework.renderers import JSONRenderer
 from rest_framework.parsers import JSONParser
-
-import pprint
+from django.utils.six import BytesIO
 
 def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     """
@@ -66,73 +64,82 @@ def take_snapshot():
             free_stands = single['Free stands'],
             timestamp = datetime.now(tz = timezone('Europe/Warsaw'))
         )
-        # time.sleep(0.25)
         obj.save()
 
-
-        print('Time: ' +  str(obj.timestamp))
-        print('----------')
-
-@periodic_task(run_every=crontab(minute='*/10'))
+@periodic_task(run_every=crontab(hour='*/12'))
 def send_data():
+        """
+        Serialization and sending the data to the UI app once in 12h.
+        Then the the data is deleted.
+        """
+        # Locations
+        locations = Location.objects.all()
+        location_serializer = LocationSerializer(locations, many=True)
+        location_json = JSONRenderer().render(location_serializer.data)
+        ######code for API connection
 
+        # Snapshots
+        snapshots = Snapshot.objects.all()
+        snapshot_serializer = SnapshotSerializer(snapshots, many=True)
+        snapshot_json = JSONRenderer().render(snapshot_serializer.data)
+        ######code for API connection
 
+        # Clearing the databases
+        locations.delete()
+        snapshots.delete()
 
+@periodic_task(run_every=crontab(0, 0, day_of_month='1'))
+def reduce_data():
+    """
+    Function averages data from every month and places it in a separate
+    table. Data is derived from the UI app API.
+    """
+    ##### get the data from API
+    locations = Location.objects.all()
+    # test
+    snapshots = Snapshot.objects.filter(pk__lte=60)
+    snapshot_serializer = SnapshotSerializer(snapshots, many=True)
+    content = JSONRenderer().render(snapshot_serializer.data)
 
+    stream = BytesIO(content)
+    snapshots = JSONParser().parse(stream)
 
+    lst=[]
+    for snapshot in snapshots:
+        lst.append([snapshot['location'], snapshot['avail_bikes'],
+                    snapshot['free_stands'], snapshot['timestamp'],
+                    snapshot['weekend']])
+    cols = ['location', 'avail_bikes', 'free_stands', 'timestamp', 'weekend']
+    df = pd.DataFrame(lst, columns=cols)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['time'] = df['timestamp'].dt.round('10min').dt.strftime('%H:%M')
 
+    group = df.groupby(['location', 'time', 'weekend'])
+    means = group.mean()
+    sd = group.std()
+    today = date.today()
+    first = today.replace(day=1)
+    last_month = first - timedelta(days=1)
 
+    # put the data in the temporary database
+    for location, time, weekend in means.index:
+        subset_mean = means.xs((location, time, weekend), level=(0,1,2), axis=0)
+        subset_sd = sd.xs((location, time, weekend), level=(0,1,2), axis=0)
+        m = Stat.objects.get_or_create(
+            location = locations.get(pk=location),
+            avail_bikes_mean = subset_mean['avail_bikes'],
+            free_stands_mean = subset_mean['free_stands'],
+            avail_bikes_sd = subset_sd['avail_bikes'],
+            free_stands_sd = subset_sd['free_stands'],
+            time = time,
+            month = last_month,
+            weekend = weekend
+        )
 
-
-
-
-
-
-# @periodic_task(run_every=crontab(minute=0, hour=0))
-# def delete_old():
-#     """
-#     Function that deletes snapshots >35 days old on the daily basis.
-#     """
-#     objs = (Snapshot
-#             .objects
-#             .filter(timestamp__lte=(datetime.now() - timedelta(days=35)))
-#             )
-#     objs.delete()
-#
-#
-# @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
-# def reduce_data():
-#     """
-#     Function averages data from every month and places it in a separate
-#     table.
-#     """
-#     snapshots = Snapshot.objects.all()
-#     locations = Location.objects.all()
-#     lst=[]
-#     for snapshot in snapshots:
-#         lst.append([snapshot.location.name, snapshot.avail_bikes,
-#                     snapshot.free_stands, snapshot.timestamp])
-#     cols = ['location', 'avail_bikes', 'free_stands', 'timestamp']
-#     df = pd.DataFrame(lst, columns=cols)
-#     df['time'] = df['timestamp'].dt.round('10min').dt.strftime('%H:%M')
-#
-#     group = df.groupby(['location', 'time'])
-#     means = group.mean()
-#     sd = group.std()
-#     today = date.today()
-#     first = today.replace(day=1)
-#     last_month = first - timedelta(days=1)
-#
-#     for name, time in means.index:
-#         subset_mean = means.xs((name, time), level=(0,1), axis=0)
-#         subset_sd = sd.xs((name, time), level=(0,1), axis=0)
-#         m = Stat.objects.get_or_create(
-#         location = locations.get(name=name),
-#         avail_bikes_mean = subset_mean['avail_bikes'],
-#         free_stands_mean = subset_mean['free_stands'],
-#         avail_bikes_sd = subset_sd['avail_bikes'],
-#         free_stands_sd = subset_sd['free_stands'],
-#         time = time,
-#         month = last_month
-#         )
-#         print(name + ' calculated')
+        # serialize the data
+        stats = Stat.objects.all()
+        stat_serializer = StatSerializer(stats, many=True)
+        stat_json = JSONRenderer().render(stat_serializer.data)
+        ######code for API connection
+        # delete created stats from the temporary databases
+        stats.delete()
