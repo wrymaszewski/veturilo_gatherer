@@ -13,6 +13,11 @@ from scraper.models import Snapshot, Location, Stat
 from scraper.serializers import (LocationSerializer,
                                 SnapshotSerializer, StatSerializer)
 
+# production
+base_url = 'http://veturiloenv.dx4ks2xc7r.us-east-1.elasticbeanstalk.com/'
+# development
+# base_url = 'http://127.0.0.1:8000/'
+
 def get_location_keys(url):
     """
     Function uses GET to fetch locations from the UI app database.
@@ -50,8 +55,8 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
 
 
 @periodic_task(run_every=crontab(minute='*/10'))
-def take_snapshot(location_url = 'http://127.0.0.1:8000/scraper/api/locations/',
-                snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/'
+def take_snapshot(location_url = base_url + 'scraper/api/locations/',
+                snapshot_url = base_url + 'scraper/api/snapshots/'
                 ):
     """
     Function that scrapes the Veturilo website every 10 minutes,
@@ -95,10 +100,10 @@ def take_snapshot(location_url = 'http://127.0.0.1:8000/scraper/api/locations/',
 
 @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
 def reduce_data(
-            location_url = 'http://127.0.0.1:8000/scraper/api/locations/',
-            snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/',
-            stat_url = 'http://127.0.0.1:8000/scraper/api/stats/',
-            snapshot_delete_url = 'http://127.0.0.1:8000/scraper/api/snapshot/',
+            location_url = base_url + 'scraper/api/locations/',
+            snapshot_url = base_url + 'scraper/api/snapshots/',
+            stat_url = base_url + 'scraper/api/stats/',
+            snapshot_delete_url = base_url + 'scraper/api/snapshot/',
             old_days = 10
             ):
     """
