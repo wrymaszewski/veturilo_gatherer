@@ -6,28 +6,40 @@ django.setup()
 
 import requests
 import json
+import datetime
 import pandas as pd
 
 from bs4 import BeautifulSoup
 from celery.task.schedules import crontab
 from celery.decorators import periodic_task
-from datetime import datetime, timedelta, date
-from django.db.models import Avg
-
-from scraper.models import Snapshot, Location, Stat
-import datetime
-
-from scraper.serializers import (LocationSerializer,
-                                SnapshotSerializer, StatSerializer)
 from rest_framework.renderers import JSONRenderer
 from rest_framework.parsers import JSONParser
-from django.utils.six import BytesIO
-import pprint
+
+from scraper.models import Snapshot, Location, Stat
+from scraper.serializers import (LocationSerializer,
+                                SnapshotSerializer, StatSerializer)
+
+def get_location_keys(url):
+    """
+    Function uses GET to fetch locations from the UI app database.
+    It returns a dictionary with location names as keys and primary keys as
+    values.
+    """
+    locations_ui = requests.get(url)
+    locations_list = locations_ui.json()
+    location_keys = {}
+    for locations in locations_list:
+        locations_keys[locations['name']] = locations['pk']
+    return location_keys
+
+def get_snapshot_list(url):
+    snapshots_ui = requests.get(url)
+    return snapshots_ui.json()
 
 def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     """
     This function will extract the table from Veturilo website and create a
-    pandas dataframe from it.
+    Pandas dataframe from it.
     """
     req = requests.get('https://' + url)
     table = BeautifulSoup(req.text).table
@@ -44,20 +56,13 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
 
 
 @periodic_task(run_every=crontab(minute='*/10'))
-def take_snapshot():
+def take_snapshot(snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/'):
     """
-    Function that scrapes the veturilo website every 10 minutes and places
-    the raw data in the DB.
+    Function that scrapes the Veturilo website every 10 minutes,
+    places the locations in the local database, and uses POST to inject
+    data to the UI app database.
     """
-    url_locations = 'http://127.0.0.1:8000/scraper/api/locations/'
-    url_snapshots = 'http://127.0.0.1:8000/scraper/api/snapshots/'
-
-    locations_ui = requests.get(url_locations)
-    locations_list = locations_ui.json()
-    location_keys = {}
-    for locations in locations_list:
-        locations_keys[locations['name']] = locations['pk']
-
+    location_keys = get_locations_keys()
     df = scrape()
     for i in df.index:
         single = df.loc[i]
@@ -76,58 +81,58 @@ def take_snapshot():
                     headers={'Content-type': 'application/json'})
 
         # create a new Snapshot object.
-        # It will not be stored in gatherer database.
+        # It will not be stored in the gatherer database.
         snapshot = Snapshot(
             location = location[single['Location']],
             avail_bikes = single['Bikes'],
             free_stands = single['Free stands'],
-            timestamp = datetime.now(tz = timezone('Europe/Warsaw'))
+            timestamp = datetime.datetime.now(tz = datetime.timezone('Europe/Warsaw'))
         )
-
+        # serialize snapshots and sensing to the UI app database.
         snapshot_serializer = SnapshotSerializer(snapshot)
         snapshot_json = JSONRenderer().render(snapshot_serializer.data)
-        r = requests.post(url_snapshots, snapshot_json,
+        r = requests.post(snapshot_url, snapshot_json,
                 headers={'Content-type': 'application/json'})
 
 
 
 @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
-def reduce_data():
+def reduce_data(
+            location_url = 'http://127.0.0.1:8000/scraper/api/locations/'
+            snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/'
+            stat_url = 'http://127.0.0.1:8000/scraper/api/stats/'
+            snapshot_delete_url = 'http://127.0.0.1:8000/scraper/api/snapshot/'
+            old_days = 10
+            ):
     """
     Function averages data from every month and places it in a separate
     table. Data is derived from the UI app API.
     """
-    ##### get the data from API
-    locations = Location.objects.all()
-    # test
-    snapshots = Snapshot.objects.filter(pk__lte=60)
-    snapshot_serializer = SnapshotSerializer(snapshots, many=True)
-    content = JSONRenderer().render(snapshot_serializer.data)
+    ##### get the data from UI app API
+    location_keys = get_location_keys(location_url)
+    snapshot_list = get_snapshot_list(snapshot_url)
 
-    stream = BytesIO(content)
-    snapshots = JSONParser().parse(stream)
-
-    lst=[]
-    for snapshot in snapshots:
-        lst.append([snapshot['location'], snapshot['avail_bikes'],
-                    snapshot['free_stands'], snapshot['timestamp'],
-                    snapshot['weekend']])
-    cols = ['location', 'avail_bikes', 'free_stands', 'timestamp', 'weekend']
-    df = pd.DataFrame(lst, columns=cols)
+    cols = ['pk', 'location', 'avail_bikes', 'free_stands', 'timestamp', 'weekend']
+    df = pd.DataFrame(snapshot_list, columns=cols)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
+    # round time to 10min
     df['time'] = df['timestamp'].dt.round('10min').dt.strftime('%H:%M')
 
-    group = df.groupby(['location', 'time', 'weekend'])
+    today = datetime.date.today()
+    first = today.replace(day=1)
+    last_month = first - datetime.timedelta(days=1)
+    cutoff_date = today - datetime.timedelta(days=old_days)
+
+    # data for removal
+    df_old = df[df['timestamp'] < cutoff_date]
+    # data for statistics
+    df_forstat = df[df['timestamp'].month == last_month]
+    group = df_forstat.groupby(['location', 'time', 'weekend'])
+    # calculate means and SDs
     means = group.mean()
     sd = group.std()
-    today = date.today()
-    first = today.replace(day=1)
-    last_month = first - timedelta(days=1)
 
-    # Serialization
-    # development
-    url = 'http://127.0.0.1:8000/scraper/api/stats/'
-
+    # Creating Stat objects, but not commiting to the gatherer database.
     for location, time, weekend in means.index:
         subset_mean = means.xs((location, time, weekend), level=(0,1,2), axis=0)
         subset_sd = sd.xs((location, time, weekend), level=(0,1,2), axis=0)
@@ -144,10 +149,9 @@ def reduce_data():
         # serialize the data
         stat_serializer = StatSerializer(stat)
         stat_json = JSONRenderer().render(stat_serializer.data)
-        r = requests.post(url, stat_json,
+        r = requests.post(stat_url, stat_json,
                 headers={'Content-type': 'application/json'})
 
-
-# reduce_data()
-take_snapshot()
-# send_data()
+    # delete old data
+    for pk in df_old['pk']:
+        r = request.delete(snapshot_delete_url + str(pk))
