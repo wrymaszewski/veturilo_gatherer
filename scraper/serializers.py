@@ -4,7 +4,7 @@ from .models import Location, Snapshot, Stat
 class LocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Location
-        fields = ('pk', 'name', 'all_stands', 'coordinates')
+        fields = ('name', 'all_stands', 'coordinates')
 
 
 class SnapshotSerializer(serializers.ModelSerializer):
@@ -17,5 +17,5 @@ class SnapshotSerializer(serializers.ModelSerializer):
 class StatSerializer(serializers.ModelSerializer):
     class Meta:
         model = Stat
-        fields = ('pk', 'location', 'avail_bikes_mean', 'free_stands_mean',
+        fields = ('location', 'avail_bikes_mean', 'free_stands_mean',
                 'avail_bikes_sd', 'free_stands_sd', 'time', 'month', 'weekend')

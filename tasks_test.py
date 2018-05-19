@@ -5,6 +5,7 @@ import django
 django.setup()
 
 import requests
+import json
 import pandas as pd
 
 from bs4 import BeautifulSoup
@@ -45,9 +46,18 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
 @periodic_task(run_every=crontab(minute='*/10'))
 def take_snapshot():
     """
-    Function that scrapes the veturilo website every 30 minutes and places
+    Function that scrapes the veturilo website every 10 minutes and places
     the raw data in the DB.
     """
+    url_locations = 'http://127.0.0.1:8000/scraper/api/locations/'
+    url_snapshots = 'http://127.0.0.1:8000/scraper/api/snapshots/'
+
+    locations_ui = requests.get(url_locations)
+    locations_list = locations_ui.json()
+    location_keys = {}
+    for locations in locations_list:
+        locations_keys[locations['name']] = locations['pk']
+
     df = scrape()
     for i in df.index:
         single = df.loc[i]
@@ -57,37 +67,29 @@ def take_snapshot():
                                 all_stands=single['Stands'],
                                 coordinates=single['Coords']
                                 )
-        print('Location: ' + loc.name)
-        # add a new snapshot
-        obj = Snapshot(
-            location = loc,
+
+        # POST new location if it doesn't exist in the databases.
+        if not created:
+            location_serializer = LocationSerializer(loc)
+            location_json = JSONRenderer().render(location_serializer.data)
+            r = requests.post(url_locations, location_json,
+                    headers={'Content-type': 'application/json'})
+
+        # create a new Snapshot object.
+        # It will not be stored in gatherer database.
+        snapshot = Snapshot(
+            location = location[single['Location']],
             avail_bikes = single['Bikes'],
             free_stands = single['Free stands'],
             timestamp = datetime.now(tz = timezone('Europe/Warsaw'))
         )
-        obj.save()
 
-@periodic_task(run_every=crontab(hour='*/4'))
-def send_data():
-        """
-        Serialization and sending the data to the UI app once in 4h.
-        Then the the data is deleted.
-        """
-        # Locations
-        locations = Location.objects.all()
-        location_serializer = LocationSerializer(locations, many=True)
-        location_json = JSONRenderer().render(location_serializer.data)
-        ######code for API connection
-
-        # Snapshots
-        snapshots = Snapshot.objects.all()
-        snapshot_serializer = SnapshotSerializer(snapshots, many=True)
+        snapshot_serializer = SnapshotSerializer(snapshot)
         snapshot_json = JSONRenderer().render(snapshot_serializer.data)
-        ######code for API connection
+        r = requests.post(url_snapshots, snapshot_json,
+                headers={'Content-type': 'application/json'})
 
-        # Clearing the databases
-        locations.delete()
-        snapshots.delete()
+
 
 @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
 def reduce_data():
@@ -123,7 +125,9 @@ def reduce_data():
     last_month = first - timedelta(days=1)
 
     # Serialization
-    obj_list = []
+    # development
+    url = 'http://127.0.0.1:8000/scraper/api/stats/'
+
     for location, time, weekend in means.index:
         subset_mean = means.xs((location, time, weekend), level=(0,1,2), axis=0)
         subset_sd = sd.xs((location, time, weekend), level=(0,1,2), axis=0)
@@ -131,23 +135,19 @@ def reduce_data():
             location = locations.get(pk=location),
             avail_bikes_mean = subset_mean['avail_bikes'],
             free_stands_mean = subset_mean['free_stands'],
-            # avail_bikes_sd = subset_sd['avail_bikes'],
-            avail_bikes_sd = 1,
-            # free_stands_sd = subset_sd['free_stands'],
-            free_stands_sd = 1,
+            avail_bikes_sd = subset_sd['avail_bikes'],
+            free_stands_sd = subset_sd['free_stands'],
             time = time,
             month = last_month,
             weekend = weekend
         )
         # serialize the data
         stat_serializer = StatSerializer(stat)
-        obj_list.append(stat_serializer.data)
-
-    # convert into json
-    stat_json = JSONRenderer().render(obj_list)
-    print(stat_json)
-    # ######code for API connection
+        stat_json = JSONRenderer().render(stat_serializer.data)
+        r = requests.post(url, stat_json,
+                headers={'Content-type': 'application/json'})
 
 
-reduce_data()
-# take_snapshot()
+# reduce_data()
+take_snapshot()
+# send_data()
