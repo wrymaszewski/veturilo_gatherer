@@ -19,11 +19,11 @@ def get_location_keys(url):
     It returns a dictionary with location names as keys and primary keys as
     values.
     """
-    locations_ui = requests.get(url)
-    locations_list = locations_ui.json()
+    location_ui = requests.get(url)
+    location_list = location_ui.json()
     location_keys = {}
-    for locations in locations_list:
-        locations_keys[locations['name']] = locations['pk']
+    for locations in location_list:
+        location_keys[locations['name']] = locations['pk']
     return location_keys
 
 def get_snapshot_list(url):
@@ -50,13 +50,14 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
 
 
 @periodic_task(run_every=crontab(minute='*/10'))
-def take_snapshot(snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/'):
+def take_snapshot(location_url = 'http://127.0.0.1:8000/scraper/api/locations/',
+                snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/'
+                ):
     """
     Function that scrapes the Veturilo website every 10 minutes,
     places the locations in the local database, and uses POST to inject
     data to the UI app database.
     """
-    location_keys = get_locations_keys()
     df = scrape()
     for i in df.index:
         single = df.loc[i]
@@ -68,23 +69,25 @@ def take_snapshot(snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/')
                                 )
 
         # POST new location if it doesn't exist in the databases.
-        if not created:
+        if created:
             location_serializer = LocationSerializer(loc)
             location_json = JSONRenderer().render(location_serializer.data)
-            r = requests.post(url_locations, location_json,
+            r = requests.post(location_url, location_json,
                     headers={'Content-type': 'application/json'})
 
-        # create a new Snapshot object.
-        # It will not be stored in the gatherer database.
-        snapshot = Snapshot(
-            location = location[single['Location']],
+    location_keys = get_location_keys(location_url)
+    # print(location_keys)
+    # create Snapshot dicts. The will not be stored in the gatherer database.
+    for i in df.index:
+        single = df.loc[i]
+        snapshot = dict(
+            location = location_keys[single['Location']],
             avail_bikes = single['Bikes'],
             free_stands = single['Free stands'],
-            timestamp = datetime.datetime.now(tz = datetime.timezone('Europe/Warsaw'))
+            timestamp = datetime.datetime.now()
         )
-        # serialize snapshots and sensing to the UI app database.
-        snapshot_serializer = SnapshotSerializer(snapshot)
-        snapshot_json = JSONRenderer().render(snapshot_serializer.data)
+
+        snapshot_json = JSONRenderer().render(snapshot)
         r = requests.post(snapshot_url, snapshot_json,
                 headers={'Content-type': 'application/json'})
 
@@ -92,10 +95,10 @@ def take_snapshot(snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/')
 
 @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
 def reduce_data(
-            location_url = 'http://127.0.0.1:8000/scraper/api/locations/'
-            snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/'
-            stat_url = 'http://127.0.0.1:8000/scraper/api/stats/'
-            snapshot_delete_url = 'http://127.0.0.1:8000/scraper/api/snapshot/'
+            location_url = 'http://127.0.0.1:8000/scraper/api/locations/',
+            snapshot_url = 'http://127.0.0.1:8000/scraper/api/snapshots/',
+            stat_url = 'http://127.0.0.1:8000/scraper/api/stats/',
+            snapshot_delete_url = 'http://127.0.0.1:8000/scraper/api/snapshot/',
             old_days = 10
             ):
     """
@@ -120,32 +123,33 @@ def reduce_data(
     # data for removal
     df_old = df[df['timestamp'] < cutoff_date]
     # data for statistics
-    df_forstat = df[df['timestamp'].month == last_month]
+    df_forstat = df[df['timestamp'].dt.month == last_month]
+
     group = df_forstat.groupby(['location', 'time', 'weekend'])
     # calculate means and SDs
     means = group.mean()
     sd = group.std()
 
-    # Creating Stat objects, but not commiting to the gatherer database.
+    # Creating Stat dicts, but not storing them in the gatherer database.
     for location, time, weekend in means.index:
         subset_mean = means.xs((location, time, weekend), level=(0,1,2), axis=0)
         subset_sd = sd.xs((location, time, weekend), level=(0,1,2), axis=0)
-        stat = Stat(
-            location = locations.get(pk=location),
-            avail_bikes_mean = subset_mean['avail_bikes'],
-            free_stands_mean = subset_mean['free_stands'],
-            avail_bikes_sd = subset_sd['avail_bikes'],
-            free_stands_sd = subset_sd['free_stands'],
+        stat = dict(
+            location = location,
+            avail_bikes_mean = subset_mean['avail_bikes'][0],
+            free_stands_mean = subset_mean['free_stands'][0],
+            avail_bikes_sd = subset_sd['avail_bikes'][0],
+            free_stands_sd = subset_sd['free_stands'][0],
             time = time,
             month = last_month,
             weekend = weekend
         )
         # serialize the data
-        stat_serializer = StatSerializer(stat)
-        stat_json = JSONRenderer().render(stat_serializer.data)
+        stat_json = JSONRenderer().render(stat)
         r = requests.post(stat_url, stat_json,
                 headers={'Content-type': 'application/json'})
 
     # delete old data
+    print (df_old)
     for pk in df_old['pk']:
-        r = request.delete(snapshot_delete_url + str(pk))
+        r = requests.delete(snapshot_delete_url + str(pk))
