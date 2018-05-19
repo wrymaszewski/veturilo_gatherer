@@ -24,7 +24,7 @@ SECRET_KEY = 'o$+rk-tt-r%u4_8jptpq(q86_bpl5@899ddq9r4im_zj1xmpn9'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['veturilo_gatherer.herokuapps.com', 'localhost']
+ALLOWED_HOSTS = ['veturilo-gatherer.herokuapps.com', 'localhost']
 
 
 # Application definition
