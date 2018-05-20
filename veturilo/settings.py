@@ -124,8 +124,8 @@ USE_TZ = True
 STATIC_URL = '/static/'
 
 BROKER_POOL_LIMIT = 3
-BROKER_URL = 'amqp://lxsefutc:43-38oaUJ23B0RQg2BXNKfabshftudlx@hound.rmq.cloudamqp.com/lxsefutc'
-
+BROKER_URL = os.environ['ClOUDAMQP_URL']
+CELERY_RESULT_BACKEND = os.environ['ClOUDAMQP_URL']
 
 import djcelery
 djcelery.setup_loader()
