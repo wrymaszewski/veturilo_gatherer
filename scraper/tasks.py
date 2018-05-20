@@ -11,12 +11,12 @@ from rest_framework.parsers import JSONParser
 
 from scraper.models import Snapshot, Location, Stat
 from scraper.serializers import (LocationSerializer,
-                                SnapshotSerializer, StatSerializer)
+                                 SnapshotSerializer, StatSerializer)
 
 # production
 base_url = 'http://veturiloenv.dx4ks2xc7r.us-east-1.elasticbeanstalk.com/'
 # development
-# base_url = 'http://127.0.0.1:8000/'
+# base_url = 'http://127.0.0.1:8000
 
 def get_location_keys(url):
     """
@@ -31,9 +31,11 @@ def get_location_keys(url):
         location_keys[locations['name']] = locations['pk']
     return location_keys
 
+
 def get_snapshot_list(url):
     snapshots_ui = requests.get(url)
     return snapshots_ui.json()
+
 
 def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     """
@@ -41,8 +43,8 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
     Pandas dataframe from it.
     """
     req = requests.get('https://' + url)
-    table = BeautifulSoup(req.text, "html.parser").table
-    dat=[]
+    table = BeautifulSoup(req.text).table
+    dat = []
     for row in table.find_all('tr'):
         cols = row.find_all('td')
         cols = [ele.text.strip() for ele in cols]
@@ -55,9 +57,9 @@ def scrape(url='www.veturilo.waw.pl/mapa-stacji/'):
 
 
 @periodic_task(run_every=crontab(minute='*/10'))
-def take_snapshot(location_url = base_url + 'scraper/api/locations/',
-                snapshot_url = base_url + 'scraper/api/snapshots/'
-                ):
+def take_snapshot(location_url=base_url + 'scraper/api/locations/',
+                  snapshot_url=base_url + 'scraper/api/snapshots/'
+                  ):
     """
     Function that scrapes the Veturilo website every 10 minutes,
     places the locations in the local database, and uses POST to inject
@@ -78,7 +80,7 @@ def take_snapshot(location_url = base_url + 'scraper/api/locations/',
             location_serializer = LocationSerializer(loc)
             location_json = JSONRenderer().render(location_serializer.data)
             r = requests.post(location_url, location_json,
-                    headers={'Content-type': 'application/json'})
+                              headers={'Content-type': 'application/json'})
 
     location_keys = get_location_keys(location_url)
     # print(location_keys)
@@ -86,35 +88,35 @@ def take_snapshot(location_url = base_url + 'scraper/api/locations/',
     for i in df.index:
         single = df.loc[i]
         snapshot = dict(
-            location = location_keys[single['Location']],
-            avail_bikes = single['Bikes'],
-            free_stands = single['Free stands'],
-            timestamp = datetime.datetime.now()
+            location=location_keys[single['Location']],
+            avail_bikes=single['Bikes'],
+            free_stands=single['Free stands'],
+            timestamp=datetime.datetime.now()
         )
 
         snapshot_json = JSONRenderer().render(snapshot)
         r = requests.post(snapshot_url, snapshot_json,
-                headers={'Content-type': 'application/json'})
-
+                          headers={'Content-type': 'application/json'})
 
 
 @periodic_task(run_every=crontab(0, 0, day_of_month='1'))
 def reduce_data(
-            location_url = base_url + 'scraper/api/locations/',
-            snapshot_url = base_url + 'scraper/api/snapshots/',
-            stat_url = base_url + 'scraper/api/stats/',
-            snapshot_delete_url = base_url + 'scraper/api/snapshot/',
-            old_days = 10
+            location_url=base_url + 'scraper/api/locations/',
+            snapshot_url=base_url + 'scraper/api/snapshots/',
+            stat_url=base_url + 'scraper/api/stats/',
+            snapshot_delete_url=base_url + 'scraper/api/snapshot/',
+            old_days=10
             ):
     """
     Function averages data from every month and places it in a separate
     table. Data is derived from the UI app API.
     """
-    ##### get the data from UI app API
+    # get the data from UI app API
     location_keys = get_location_keys(location_url)
     snapshot_list = get_snapshot_list(snapshot_url)
 
-    cols = ['pk', 'location', 'avail_bikes', 'free_stands', 'timestamp', 'weekend']
+    cols = ['pk', 'location', 'avail_bikes',
+            'free_stands', 'timestamp', 'weekend']
     df = pd.DataFrame(snapshot_list, columns=cols)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     # round time to 10min
@@ -137,24 +139,25 @@ def reduce_data(
 
     # Creating Stat dicts, but not storing them in the gatherer database.
     for location, time, weekend in means.index:
-        subset_mean = means.xs((location, time, weekend), level=(0,1,2), axis=0)
-        subset_sd = sd.xs((location, time, weekend), level=(0,1,2), axis=0)
+        subset_mean = (means.xs((location, time, weekend),
+                       level=(0, 1, 2), axis=0))
+        subset_sd = (sd.xs((location, time, weekend),
+                     level=(0, 1, 2), axis=0))
         stat = dict(
-            location = location,
-            avail_bikes_mean = subset_mean['avail_bikes'][0],
-            free_stands_mean = subset_mean['free_stands'][0],
-            avail_bikes_sd = subset_sd['avail_bikes'][0],
-            free_stands_sd = subset_sd['free_stands'][0],
-            time = time,
-            month = last_month,
-            weekend = weekend
+            location=location,
+            avail_bikes_mean=subset_mean['avail_bikes'][0],
+            free_stands_mean=subset_mean['free_stands'][0],
+            avail_bikes_sd=subset_sd['avail_bikes'][0],
+            free_stands_sd=subset_sd['free_stands'][0],
+            time=time,
+            month=last_month,
+            weekend=weekend
         )
         # serialize the data
         stat_json = JSONRenderer().render(stat)
         r = requests.post(stat_url, stat_json,
-                headers={'Content-type': 'application/json'})
+                          headers={'Content-type': 'application/json'})
 
     # delete old data
-    print (df_old)
     for pk in df_old['pk']:
         r = requests.delete(snapshot_delete_url + str(pk))
